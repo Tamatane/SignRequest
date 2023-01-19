@@ -2,7 +2,7 @@
 
 namespace AtaneNL\SignRequest\Exceptions;
 
-class LocalException extends SignRequestException
+class SignRequestException extends \Exception
 {
 
 }

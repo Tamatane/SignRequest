@@ -1,20 +1,29 @@
 {
-    "name": "atanenl/signrequest",
-    "description": "SignRequest API Client",
-    "keywords": ["SignRequest"],
-    "require": {
-        "php": ">=5.5.9",
-        "anlutro/curl": "^1.4"
+  "name": "atanenl/signrequest",
+  "description": "SignRequest API Client",
+  "keywords": [
+    "SignRequest"
+  ],
+  "require": {
+    "php": "^7.4|^8.0.2",
+    "ext-json": "*",
+    "guzzlehttp/guzzle": "^7.5"
+  },
+  "homepage": "https://www.kidskonnect.nl",
+  "license": "GPL-3.0-or-later",
+  "authors": [
+    {
+      "name": "Tamasja",
+      "email": "tamasja@atane.nl"
     },
-    "homepage": "http://www.atane.nl",
-    "license": "GPL-3.0-or-later",
-    "authors": [
-        {
-            "name": "Daniël Oosterhuis",
-            "email": "daniel@atane.nl"
-        }
-    ],
-    "autoload": {
-        "psr-0": { "AtaneNL\\SignRequest": "src/" }
+    {
+      "name": "Daniël Oosterhuis",
+      "email": "daniel@atane.nl"
     }
+  ],
+  "autoload": {
+    "psr-0": {
+      "AtaneNL\\SignRequest\\": "src"
+    }
+  }
 }

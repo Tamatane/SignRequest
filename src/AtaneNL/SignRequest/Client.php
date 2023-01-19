@@ -2,53 +2,129 @@
 
 namespace AtaneNL\SignRequest;
 
-use anlutro\cURL\cURL;
-use anlutro\cURL\Request;
-use anlutro\cURL\Response;
-
-// TODO move requests to individual classes
+use AtaneNL\SignRequest\Exceptions\LocalException;
+use AtaneNL\SignRequest\Exceptions\RemoteException;
+use AtaneNL\SignRequest\Exceptions\SendSignRequestException;
+use GuzzleHttp\ClientInterface;
+use Psr\Http\Client\ClientExceptionInterface;
+use Psr\Http\Message\ResponseInterface;
 
 class Client
 {
+    const DEFAULT_API_BASEURL = "https://[SUBDOMAIN]signrequest.com/api/v1";
+    protected string $apiBaseUrl;
+    protected static string $defaultLanguage = 'nl';
+    protected ?string $subdomain; // the subdomain
+    protected ClientInterface $httpClient;
 
-    const API_BASEURL = "https://[SUBDOMAIN]signrequest.com/api/v1";
 
-    public static $defaultLanguage = 'nl';
-
-    /* @var $curl \anlutro\cURL\cURL */
-    private $curl;
-    private $token;
-    private $subdomain; // the subdomain
-
-    public function __construct($token, $subdomain = null) {
-        $this->token = $token;
+    /**
+     * @param string $token
+     * @param string|null $subdomain
+     * @param array $clientOptions GuzzleClient options extend/override
+     */
+    public function __construct(string $token, ?string $subdomain = null, array $clientOptions = [])
+    {
         $this->subdomain = $subdomain;
-        $this->curl = new cURL();
+        $this->setApiBaseUrl();
+        $this->setHttpClient(
+            $this->buildHttpClient($token, $clientOptions)
+        );
+    }
+
+    public function getSubdomain(): ?string
+    {
+        return $this->subdomain;
+    }
+
+    public function setApiBaseUrl($url = self::DEFAULT_API_BASEURL): void
+    {
+        $this->apiBaseUrl = $url;
+    }
+
+    public function getApiBaseUrl(): string
+    {
+        return $this->apiBaseUrl;
+    }
+
+    public function setHttpClient(ClientInterface $client)
+    {
+        $this->httpClient = $client;
+    }
+
+    public function getHttpClient(): ClientInterface
+    {
+        return $this->httpClient;
+    }
+
+    public static function getDefaultLanguage(): string
+    {
+        return self::$defaultLanguage;
+    }
+
+    public static function setDefaultLanguage(string $defaultLanguage): void
+    {
+        self::$defaultLanguage = $defaultLanguage;
+    }
+
+    protected function buildHttpClient(string $token, array $clientOptions = []): ClientInterface
+    {
+        return new \GuzzleHttp\Client(array_merge([
+            'headers' => [
+                'user-agent' => 'SignRequestClient/3.0',
+                'accept' => 'application/json',
+                'Authorization' => "Token {$token}"
+            ]
+        ], $clientOptions));
     }
 
     /**
      * Send a document to SignRequest.
-     * @param string $file The absolute path to a file.
+     * https://signrequest.com/api/v1/docs/#operation/documents_create
+     *
+     * @param string $filePath The absolute path to a file.
      * @param string $identifier unique identifier for this file
-     * @param string $callbackUrl [optional] url to call when signing is completed
-     * @param string $filename [optional] the filename as the signer will see it
-     * @param array $settings [optional]
+     * @param string|null $callbackUrl url to call when signing is completed
+     * @param string|null $filename the filename as the signer will see it
+     * @param array $settings
      * @return CreateDocumentResponse
-     * @throws Exceptions\SendSignRequestException
+     * @throws SendSignRequestException
      */
-    public function createDocument($file, $identifier, $callbackUrl = null, $filename = null, $settings = []) {
-        $file = curl_file_create($file, null, $filename);
-        $response = $this->newRequest("documents")
-            ->setHeader("Content-Type", "multipart/form-data")
-            ->setData(array_merge($settings, [
-                'file'                => $file,
-                'external_id'         => $identifier,
-                'events_callback_url' => $callbackUrl
-            ]))
-            ->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\SendSignRequestException($response);
+    public function createDocument(string $filePath, string $identifier, ?string $callbackUrl = null, ?string $filename = null, array $settings = []): CreateDocumentResponse
+    {
+        if ($filename === null) {
+            $filename = pathinfo($filePath, PATHINFO_BASENAME);
         }
+
+        $contents = file_get_contents($filePath);
+
+        return $this->createDocumentFromContents($contents, $identifier, $callbackUrl, $filename, $settings);
+    }
+
+    /**
+     * @param string $contents
+     * @param string $identifier
+     * @param string|null $callbackUrl
+     * @param string|null $filename
+     * @param array $settings
+     * @return CreateDocumentResponse
+     * @throws SendSignRequestException
+     */
+    public function createDocumentFromContents(string $contents, string $identifier, ?string $callbackUrl = null, string $filename = null, array $settings = []): CreateDocumentResponse
+    {
+        try {
+            $response = $this->createDocumentRequest([
+                'json' => array_merge($settings, [
+                    'file_from_content' => $this->prepareFileContents($contents),
+                    'file_from_content_name' => $filename,
+                    'external_id' => $identifier,
+                    'events_callback_url' => $callbackUrl,
+                ])
+            ]);
+        } catch (RemoteException $e) {
+            throw new SendSignRequestException($e->getMessage(), $e->getCode(), $e);
+        }
+
         return new CreateDocumentResponse($response);
     }
 
@@ -56,48 +132,49 @@ class Client
      * Send a document to SignRequest using the file_from_url option.
      * @param string $url The URL of the page we want to sign.
      * @param string $identifier
-     * @param string $callbackUrl
-     * @param array $settings [optional]
+     * @param string|null $callbackUrl
+     * @param array $settings
      * @return CreateDocumentResponse
-     * @throws Exceptions\SendSignRequestException
+     * @throws SendSignRequestException
      */
-    public function createDocumentFromURL($url, $identifier, $callbackUrl = null, $settings = []) {
-        $response = $this->newRequest("documents")
-            ->setHeader("Content-Type", "multipart/form-data")
-            ->setData(array_merge($settings, [
-                'file_from_url'       => $url,
-                'external_id'         => $identifier,
-                'events_callback_url' => $callbackUrl
-            ]))
-            ->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\SendSignRequestException($response);
+    public function createDocumentFromURL(string $url, string $identifier, ?string $callbackUrl = null, array $settings = []): CreateDocumentResponse
+    {
+        try {
+            $response = $this->createDocumentRequest([
+                'json' => array_merge($settings, [
+                    'file_from_url' => $url,
+                    'external_id' => $identifier,
+                    'events_callback_url' => $callbackUrl,
+                ])
+            ]);
+        } catch (RemoteException $e) {
+            throw new SendSignRequestException($e->getMessage(), $e->getCode(), $e);
         }
+
         return new CreateDocumentResponse($response);
     }
 
     /**
      * Send a document to SignRequest using the template option.
-     * @param string $url         the URL of the template we want to sign
-     * @param string $identifier
-     * @param string $callbackUrl
-     * @param array $settings [optional]
+     * @param string $url the URL of the template we want to sign
+     * @param string|null $identifier
+     * @param string|null $callbackUrl
+     * @param array $settings
      * @return CreateDocumentResponse
-     * @throws Exceptions\SendSignRequestException
+     * @throws SendSignRequestException
      */
-    public function createDocumentFromTemplate($url, $identifier = null, $callbackUrl = null, $settings = [])
+    public function createDocumentFromTemplate(string $url, ?string $identifier = null, ?string $callbackUrl = null, array $settings = []): CreateDocumentResponse
     {
-        $response = $this->newRequest('documents')
-            ->setHeader('Content-Type', 'multipart/form-data')
-            ->setData(array_merge($settings, [
-                'template' => $url,
-                'external_id' => $identifier,
-                'events_callback_url' => $callbackUrl,
-            ]))
-            ->send();
-
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\SendSignRequestException($response);
+        try {
+            $response = $this->createDocumentRequest([
+                'json' => array_merge($settings, [
+                    'template' => $url,
+                    'external_id' => $identifier,
+                    'events_callback_url' => $callbackUrl,
+                ])
+            ]);
+        } catch (RemoteException $e) {
+            throw new SendSignRequestException($e->getMessage(), $e->getCode(), $e);
         }
 
         return new CreateDocumentResponse($response);
@@ -105,40 +182,45 @@ class Client
 
     /**
      * Gets templates from sign request frontend.
-     * @return \stdClass response
-     * @throws Exceptions\RemoteException
+     * @return array response
+     * @throws RemoteException
      */
-    public function getTemplates()
+    public function getTemplates(): array
     {
-        $response = $this->newRequest('templates', 'get')->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException($response);
-        }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
+        return $this->decodeJsonResponse(
+            $this->request('templates', 'get')
+        );
     }
 
     /**
      * Add attachment to document sent to SignRequest.
-     * @param string $file The absolute path to a file.
-     * @param CreateDocumentResponse $cdr
-     * @return \stdClass response
-     * @throws Exceptions\SendSignRequestException
+     * @param string $filePath
+     * @param CreateDocumentResponse $createDocumentResponse
+     * @param string|null $filename
+     * @return array response
+     * @throws SendSignRequestException
      */
-    public function addAttachmentToDocument($file, CreateDocumentResponse $cdr) {
-        $file = curl_file_create($file);
-        $response = $this->newRequest("document-attachments")
-            ->setHeader("Content-Type", "multipart/form-data")
-            ->setData([
-                          'file'     => $file,
-                          'document' => $cdr->url
-                      ])
-            ->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\SendSignRequestException($response);
+    public function addAttachmentToDocument(string $filePath, CreateDocumentResponse $createDocumentResponse, ?string $filename = null): array
+    {
+        try {
+            if ($filename === null) {
+                $filename = pathinfo($filePath, PATHINFO_BASENAME);
+            }
+
+            $contents = file_get_contents($filePath);
+
+            $response = $this->request('document-attachments', 'post', [
+                'json' => [
+                    'file_from_content_name' => $filename,
+                    'file_from_content' => $this->prepareFileContents($contents),
+                    'document' => $createDocumentResponse->url,
+                ]
+            ]);
+        } catch (RemoteException $e) {
+            throw new SendSignRequestException($e->getMessage(), $e->getCode(), $e);
         }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
+
+        return $this->decodeJsonResponse($response);
     }
 
     /**
@@ -146,106 +228,78 @@ class Client
      * @param string $documentId uuid
      * @param string $sender Senders e-mail address
      * @param array $recipients
-     * @param string $message
+     * @param null $message
      * @param bool $sendReminders Send automatic reminders
      * @param array $settings Add additional request parameters or override defaults
-     * @return \stdClass SignRequest response data
-     * @throws Exceptions\SendSignRequestException
+     * @return array SignRequest response data
+     * @throws SendSignRequestException
      */
-    public function sendSignRequest($documentId, $sender, $recipients, $message = null, $sendReminders = false, $settings = []) {
-        foreach ($recipients as &$r) {
-            if (!array_key_exists('language', $r)) {
-                $r['language'] = self::$defaultLanguage;
+    public function sendSignRequest(string $documentId, string $sender, array $recipients, $message = null, bool $sendReminders = false, array $settings = []): array
+    {
+        try {
+            foreach ($recipients as &$r) {
+                if (!array_key_exists('language', $r)) {
+                    $r['language'] = self::$defaultLanguage;
+                }
             }
+
+            $response = $this->request('signrequests', 'post', [
+                'json' => array_merge([
+                    "disable_text" => true,
+                    "disable_attachments" => true,
+                    "disable_date" => true,
+                ], $settings, [
+                    "document" => $this->makeRequestUri("documents/{$documentId}"),
+                    "from_email" => $sender,
+                    "message" => $message,
+                    "signers" => $recipients,
+                    "send_reminders" => $sendReminders
+                ])
+            ]);
+
+            return $this->decodeJsonResponse($response);
+        } catch (RemoteException $e) {
+            throw new SendSignRequestException($e->getMessage(), $e->getCode(), $e);
         }
-        $response = $this->newRequest("signrequests")
-            ->setHeader("Content-Type", "application/json")
-            ->setEncoding(Request::ENCODING_JSON)
-            ->setData(array_merge([
-                                      "disable_text"        => true,
-                                      "disable_attachments" => true,
-                                      "disable_date"        => true,
-                                  ], $settings, [
-                                      "document"       => self::API_BASEURL . "/documents/" . $documentId . "/",
-                                      "from_email"     => $sender,
-                                      "message"        => $message,
-                                      "signers"        => $recipients,
-                                      "send_reminders" => $sendReminders
-                                  ]))
-            ->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\SendSignRequestException($response);
-        }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
     }
 
     /**
      * Send a reminder to all recipients who have not signed yet.
      * @param string $signRequestId uuid
-     * @return \stdClass response
+     * @return array response
      * @throws Exceptions\RemoteException
      */
-    public function sendSignRequestReminder($signRequestId) {
-        $response = $this->newRequest("signrequests/{$signRequestId}/resend_signrequest_email", "post")
-            ->setHeader("Content-Type", "application/json")
-            ->setEncoding(Request::ENCODING_JSON)
-            ->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException($response);
-        }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
-    }
-
-    /**
-     * Cancel an existing sign request
-     * @param string $signRequestId uuid
-     * @return mixed
-     * @throws Exceptions\RemoteException
-     */
-    public function cancelSignRequest($signRequestId) {
-        $response = $this
-            ->newRequest("signrequests/{$signRequestId}/cancel_signrequest")
-            ->setHeader("Content-Type", "application/json")
-            ->setEncoding(Request::ENCODING_JSON)
-            ->send();
-
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException($response);
-        }
-
-        return json_decode($response->body);
+    public function sendSignRequestReminder(string $signRequestId): array
+    {
+        return $this->decodeJsonResponse(
+            $this->request("signrequests/{$signRequestId}/resend_signrequest_email", "post")
+        );
     }
 
     /**
      * Gets the current status for a sign request.
      * @param string $signRequestId uuid
-     * @return \stdClass response
-     * @throws Exceptions\RemoteException
+     * @return array response
+     * @throws RemoteException
      */
-    public function getSignRequestStatus($signRequestId) {
-        $response = $this->newRequest("signrequests/{$signRequestId}", "get")->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException($response);
-        }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
+    public function getSignRequestStatus(string $signRequestId): array
+    {
+        return $this->decodeJsonResponse(
+            $this->request("signrequests/{$signRequestId}", "get")
+        );
     }
 
     /**
      * Get a file.
      * @param string $documentId uuid
-     * @return \stdClass response
-     * @throws Exceptions\RemoteException
+     * @return array response
+     * @throws RemoteException
      */
-    public function getDocument($documentId) {
-        $response = $this->newRequest("documents/{$documentId}", "get")->send();
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException($response);
-        }
-        $responseObj = json_decode($response->body);
-        return $responseObj;
+    public function getDocument(string $documentId): array
+    {
+        return $this->decodeJsonResponse(
+            $this->request("signrequests/{$documentId}", "get")
+        );
     }
 
     /**
@@ -257,94 +311,145 @@ class Client
      * @throws Exceptions\LocalException
      * @throws Exceptions\RemoteException
      */
-    public function createTeam($name, $subdomain) {
-        if ($this->subdomain !== null) {
-            throw new Exceptions\LocalException("This request cannot be sent to a subdomain. Initialize the client without a subdomain.");
-        }
-        $response = $this->newRequest("teams")
-            ->setHeader("Content-Type", "application/json")
-            ->setEncoding(Request::ENCODING_JSON)
-            ->setData([
-                          "name"      => $name,
-                          "subdomain" => $subdomain
-                      ])
-            ->send();
+    public function createTeam(string $name, string $subdomain): ?string
+    {
+        try {
+            $this->assertGlobalClient();
 
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException("Unable to create team $name: " . $response);
+            $response = $this->decodeJsonResponse(
+                $this->request("teams", "post", [
+                    'json' => [
+                        "name" => $name,
+                        "subdomain" => $subdomain,
+                    ]
+                ])
+            );
+
+            return $response['subdomain'] ?? null;
+
+        } catch (RemoteException $e) {
+            throw new RemoteException("Unable to create team {$name}: {$e->getMessage()}", $e->getCode(), $e);
         }
-        $responseObj = json_decode($response->body);
-        return $responseObj->subdomain;
     }
 
     /**
      * @param string $subdomain
-     * @return \stdClass
-     * @throws Exceptions\LocalException
-     * @throws Exceptions\RemoteException
+     * @return array
+     * @throws LocalException
+     * @throws RemoteException
      */
-    public function getTeam($subdomain) {
-        if ($this->subdomain !== null) {
-            throw new Exceptions\LocalException("This request cannot be sent to a subdomain. Initialize the client without a subdomain.");
-        }
-        $response = $this->newRequest("teams/${subdomain}", 'get')->send();
+    public function getTeam(string $subdomain): array
+    {
+        try {
+            $this->assertGlobalClient();
 
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException("Unable to get team $subdomain: " . $response);
+            return $this->decodeJsonResponse(
+                $this->request("teams/${subdomain}", 'get')
+            );
+        } catch (RemoteException $e) {
+            throw new RemoteException("Unable to get team {$subdomain}: {$e->getMessage()}", $e->getCode(), $e);
         }
-        return json_decode($response->body);
     }
 
     /**
      * @param string $subdomain
-     * @param array|\stdClass $params (specify any parameters to update, such as name, logo, phone, primary_color)
-     * @return \stdClass
-     * @throws Exceptions\LocalException
-     * @throws Exceptions\RemoteException
+     * @param array $params (specify any parameters to update, such as name, logo, phone, primary_color)
+     * @return array
+     * @throws LocalException
+     * @throws RemoteException
      */
-    public function updateTeam($subdomain, $params) {
-        if ($this->subdomain !== null) {
-            throw new Exceptions\LocalException("This request cannot be sent to a subdomain. Initialize the client without a subdomain.");
-        }
-        $response = $this->newRequest("teams/${subdomain}", 'patch')
-            ->setHeader("Content-Type", "application/json")
-            ->setEncoding(Request::ENCODING_JSON)
-            ->setData($params)
-            ->send();
+    public function updateTeam(string $subdomain, array $params): array
+    {
+        try {
+            $this->assertGlobalClient();
 
-        if ($this->hasErrors($response)) {
-            throw new Exceptions\RemoteException("Unable to update team $subdomain: " . $response);
+            return $this->decodeJsonResponse(
+                $this->request("teams/${subdomain}", 'post')
+            );
+        } catch (RemoteException $e) {
+            throw new RemoteException("Unable to get team {$subdomain}: {$e->getMessage()}", $e->getCode(), $e);
         }
-        return json_decode($response->body);
     }
 
     /**
-     * Setup a base request object.
+     * Make a request to the API for the given action
+     *
      * @param string $action
-     * @param string $method post,put,get,delete,option
-     * @return Request
+     * @param string $method HTTP verb
+     * @param array $options
+     * @return ResponseInterface
+     * @throws RemoteException
      */
-    private function newRequest($action, $method = 'post') {
-        $baseRequest = $this->curl->newRawRequest($method, $this->getApiUrl() . "/" . $action . "/")
-            ->setHeader("Authorization", "Token " . $this->token);
-        return $baseRequest;
+    protected function request(string $action, string $method, array $options = []): ResponseInterface
+    {
+        try {
+            return $this->getHttpClient()->request($method, $this->makeRequestUri($action), $options);
+        } catch (ClientExceptionInterface $e) {
+            throw new RemoteException($e->getMessage(), $e->getCode(), $e);
+        }
+    }
+
+    /**
+     * Transform action to callable request url
+     *
+     * @param string $action
+     * @return string
+     */
+    protected function makeRequestUri(string $action): string
+    {
+        return $this->getApiUrl($this->getSubdomain()) . "/" . $action . "/";
     }
 
     /**
      * Set the API url based on the subdomain.
-     * @return string API url
+     *
+     * @param string|null $subdomain
      */
-    private function getApiUrl() {
-        return preg_replace('/\[SUBDOMAIN\]/', ltrim($this->subdomain . ".", "."), self::API_BASEURL);
+    protected function getApiUrl(?string $subdomain): string
+    {
+        return preg_replace('/\[SUBDOMAIN\]/', ltrim($subdomain . ".", "."), $this->getApiBaseUrl());
     }
 
     /**
-     * Check for error in status headers.
-     * @param Response $response
-     * @return bool
+     * https://signrequest.com/api/v1/docs/#operation/documents_create
+     * @throws RemoteException
      */
-    private function hasErrors($response) {
-        return !preg_match('/^20\d$/', $response->statusCode);
+    protected function createDocumentRequest(array $options): ResponseInterface
+    {
+        return $this->request('documents', 'post', $options);
     }
 
+    /**
+     * Transform response containing json to an array
+     *
+     * @param ResponseInterface $response
+     * @return array
+     */
+    protected function decodeJsonResponse(ResponseInterface $response): array
+    {
+        return json_decode($response->getBody()->getContents(), true);
+    }
+
+    /**
+     * Prepare file contents in SignRequest expected format
+     *
+     * @param string $contents
+     * @return string
+     */
+    protected function prepareFileContents(string $contents): string
+    {
+        return base64_encode($contents);
+    }
+
+    /**
+     * Assert client is not initialized with a subdomain
+     * @return void
+     * @throws LocalException
+     */
+    protected function assertGlobalClient(): void
+    {
+        if ($this->getSubdomain() !== null) {
+            throw new Exceptions\LocalException("This request cannot be sent to a subdomain. Initialize the client without a subdomain.");
+        }
+    }
 }

@@ -1,6 +1,8 @@
 <?php
+
 namespace AtaneNL\SignRequest\Exceptions;
 
-class RemoteException extends \Exception {
+class RemoteException extends SignRequestException
+{
 
 }
