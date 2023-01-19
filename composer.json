@@ -4,11 +4,6 @@
   "keywords": [
     "SignRequest"
   ],
-  "require": {
-    "php": "^7.4|^8.0.2",
-    "ext-json": "*",
-    "guzzlehttp/guzzle": "^7.5"
-  },
   "homepage": "https://www.kidskonnect.nl",
   "license": "GPL-3.0-or-later",
   "authors": [
@@ -21,9 +16,27 @@
       "email": "daniel@atane.nl"
     }
   ],
+  "require": {
+    "php": "^7.4|^8.0.2",
+    "ext-json": "*",
+    "guzzlehttp/guzzle": "^7.5"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^9.5"
+  },
   "autoload": {
     "psr-0": {
       "AtaneNL\\SignRequest\\": "src"
     }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "AtaneNL\\SignRequest\\Tests\\": "tests"
+    }
+  },
+  "scripts": {
+    "test": [
+      "phpunit"
+    ]
   }
 }
