@@ -1,0 +1,10 @@
+parameters:
+  level: 5
+  paths:
+    - src
+    - tests
+  checkFunctionNameCase: true
+  checkInternalClassCaseSensitivity: true
+  checkUninitializedProperties: true
+  tipsOfTheDay: false
+  reportUnmatchedIgnoredErrors: false

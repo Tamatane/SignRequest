@@ -22,7 +22,8 @@
     "guzzlehttp/guzzle": "^7.5"
   },
   "require-dev": {
-    "phpunit/phpunit": "^9.5"
+    "phpunit/phpunit": "^9.5",
+    "phpstan/phpstan": "^1.9"
   },
   "autoload": {
     "psr-0": {
@@ -37,6 +38,12 @@
   "scripts": {
     "test": [
       "phpunit"
+    ],
+    "phpstan": [
+      "phpstan analyse"
+    ],
+    "phpstan:clear": [
+      "phpstan clear-result-cache"
     ]
   }
 }
