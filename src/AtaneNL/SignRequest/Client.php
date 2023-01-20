@@ -277,6 +277,20 @@ class Client
     }
 
     /**
+     * Cancel an existing sign request
+     *
+     * @param string $signRequestId uuid
+     * @return array response
+     * @throws RemoteException
+     */
+    public function cancelSignRequest(string $signRequestId): array
+    {
+        return $this->decodeJsonResponse(
+            $this->request("signrequests/{$signRequestId}/cancel_signrequest", "post")
+        );
+    }
+
+    /**
      * Gets the current status for a sign request.
      * @param string $signRequestId uuid
      * @return array response
