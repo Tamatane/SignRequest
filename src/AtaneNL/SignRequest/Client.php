@@ -312,7 +312,7 @@ class Client
     public function getDocument(string $documentId): array
     {
         return $this->decodeJsonResponse(
-            $this->request("signrequests/{$documentId}", "get")
+            $this->request("documents/{$documentId}", "get")
         );
     }
 
