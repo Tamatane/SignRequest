@@ -1,4 +1,4 @@
-/nbproject/
 /vendor/
-/run.php
-/composer.lock
+/.phpunit.result.cache
+/phpunit.xml
+/phpstan.neon
