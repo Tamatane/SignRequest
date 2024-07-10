@@ -378,10 +378,10 @@ class Client
             $this->assertGlobalClient();
 
             return $this->decodeJsonResponse(
-                $this->request("teams/${subdomain}", 'post')
+                $this->request("teams/${subdomain}", 'patch')
             );
         } catch (RemoteException $e) {
-            throw new RemoteException("Unable to get team {$subdomain}: {$e->getMessage()}", $e->getCode(), $e);
+            throw new RemoteException("Unable to update team {$subdomain}: {$e->getMessage()}", $e->getCode(), $e);
         }
     }
 
